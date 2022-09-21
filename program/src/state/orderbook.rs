@@ -12,7 +12,7 @@ use crate::{
         AccountTag, SelfTradeBehavior, Side,
     },
 };
-use bonfida_utils::fp_math::{fp32_div, fp32_mul_ceil, fp32_mul_floor};
+use bonfida_utils::fp_math::{fp32_div, fp32_mul};
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::Pod;
 use solana_program::{msg, program_error::ProgramError};
@@ -55,10 +55,6 @@ impl CallbackInfo for [u8; 32] {
 
 /// The serialized size of an OrderSummary object.
 pub const ORDER_SUMMARY_SIZE: u32 = 41;
-
-/// The maximum number of matches a single transaction can handle, based on compute limit
-/// TODO: Find this value empirically
-pub const MAX_MATCHES_PER_TRANSACTION: u32 = 5;
 
 #[doc(hidden)]
 pub struct OrderBookState<'a, C> {
@@ -173,12 +169,8 @@ where
                 break;
             }
 
-            let quote_maker_qty = match side {
-                Side::Bid => fp32_mul_ceil(base_trade_qty, trade_price),
-                Side::Ask => fp32_mul_floor(base_trade_qty, trade_price),
-            }
-            .map(|q| std::cmp::min(q, quote_qty_remaining))
-            .ok_or(AoError::NumericalOverflow)?;
+            let quote_maker_qty =
+                fp32_mul(base_trade_qty, trade_price).ok_or(AoError::NumericalOverflow)?;
 
             if quote_maker_qty == 0 {
                 break;
@@ -198,9 +190,13 @@ where
                     assert!(self_trade_behavior == SelfTradeBehavior::CancelProvide);
                     let provide_out_callback_info =
                         &opposite_slab.callback_infos[best_bo_h as usize];
+                    #[cfg(not(target_arch = "aarch64"))]
+                    let order_id = best_offer_id;
+                    #[cfg(target_arch = "aarch64")]
+                    let order_id = [best_offer_id as u64, (best_offer_id >> 64) as u64];
                     let provide_out = OutEvent {
                         side: side.opposite() as u8,
-                        order_id: best_offer_id,
+                        order_id,
                         base_size: best_bo_ref.base_quantity,
                         tag: EventTag::Out as u8,
                         _padding: [0; 14],
@@ -221,9 +217,17 @@ where
 
             let maker_callback_info = &opposite_slab.callback_infos[best_bo_h as usize];
 
+            #[cfg(not(target_arch = "aarch64"))]
+            let maker_order_id = best_bo_ref.order_id();
+            #[cfg(target_arch = "aarch64")]
+            let maker_order_id = {
+                let o = best_bo_ref.order_id();
+                [o as u64, (o >> 64) as u64]
+            };
+
             let maker_fill = FillEvent {
                 taker_side: side as u8,
-                maker_order_id: best_bo_ref.order_id(),
+                maker_order_id,
                 quote_size: quote_maker_qty,
                 base_size: base_trade_qty,
                 tag: EventTag::Fill as u8,
@@ -240,9 +244,13 @@ where
             if best_bo_ref.base_quantity < min_base_order_size {
                 let best_offer_id = best_bo_ref.order_id();
                 let cur_side = side.opposite();
+                #[cfg(not(target_arch = "aarch64"))]
+                let order_id = best_offer_id;
+                #[cfg(target_arch = "aarch64")]
+                let order_id = [best_offer_id as u64, (best_offer_id >> 64) as u64];
                 let out_event = OutEvent {
                     side: cur_side as u8,
-                    order_id: best_offer_id,
+                    order_id,
                     base_size: best_bo_ref.base_quantity,
                     tag: EventTag::Out as u8,
                     _padding: [0; 14],
@@ -276,7 +284,13 @@ where
 
         let new_leaf_order_id = event_queue.gen_order_id(limit_price, side);
         let new_leaf = LeafNode {
-            key: new_leaf_order_id,
+            key: {
+                #[cfg(not(target_arch = "aarch64"))]
+                let k = new_leaf_order_id;
+                #[cfg(target_arch = "aarch64")]
+                let k = [new_leaf_order_id as u64, (new_leaf_order_id >> 64) as u64];
+                k
+            },
             base_quantity: base_qty_to_post,
         };
         let insert_result = self.get_tree(side).insert_leaf(&new_leaf);
@@ -288,7 +302,8 @@ where
                 Side::Bid => slab.find_min().unwrap(),
                 Side::Ask => slab.find_max().unwrap(),
             };
-            let boot_candidate_key = slab.leaf_nodes[boot_candidate as usize].key;
+            // let boot_candidate_key = slab.leaf_nodes[boot_candidate as usize].key;
+            let boot_candidate_key = slab.leaf_nodes[boot_candidate as usize].order_id();
             let boot_candidate_price = LeafNode::price_from_key(boot_candidate_key);
             let should_boot = match side {
                 Side::Bid => boot_candidate_price < limit_price,
@@ -296,9 +311,15 @@ where
             };
             if should_boot {
                 let (order, callback_info_booted) = slab.remove_by_key(boot_candidate_key).unwrap();
+                #[allow(clippy::let_and_return)]
                 let out = OutEvent {
                     side: side as u8,
-                    order_id: order.order_id(),
+                    order_id: {
+                        let o = order.order_id();
+                        #[cfg(target_arch = "aarch64")]
+                        let o = [o as u64, (o >> 64) as u64];
+                        o
+                    },
                     base_size: order.base_quantity,
                     tag: EventTag::Out as u8,
                     _padding: [0; 14],
@@ -320,149 +341,14 @@ where
         };
         *self.get_tree(side).get_callback_info_mut(k) = callback_info;
         base_qty_remaining -= base_qty_to_post;
-        quote_qty_remaining -= match side {
-            Side::Bid => fp32_mul_ceil(base_qty_to_post, limit_price),
-            Side::Ask => fp32_mul_floor(base_qty_to_post, limit_price),
-        }
-        .ok_or(AoError::NumericalOverflow)?;
+        quote_qty_remaining -=
+            fp32_mul(base_qty_to_post, limit_price).ok_or(AoError::NumericalOverflow)?;
         Ok(OrderSummary {
             posted_order_id: Some(new_leaf_order_id),
             total_base_qty: max_base_qty - base_qty_remaining,
             total_quote_qty: max_quote_qty - quote_qty_remaining,
             total_base_qty_posted: base_qty_to_post,
         })
-    }
-
-    pub fn insert_without_matching(
-        &mut self,
-        params: new_order::Params<C>,
-        event_queue: &mut EventQueue<'a, C>,
-        min_base_order_size: u64,
-    ) -> Result<OrderSummary, AoError> {
-        let new_order::Params {
-            max_base_qty,
-            max_quote_qty,
-            side,
-            limit_price,
-            callback_info,
-            post_allowed,
-            ..
-        } = params;
-
-        let base_qty_to_post = std::cmp::min(
-            fp32_div(max_quote_qty, limit_price).unwrap_or(u64::MAX),
-            max_base_qty,
-        );
-
-        if base_qty_to_post < min_base_order_size || !post_allowed {
-            return Ok(OrderSummary {
-                posted_order_id: None,
-                total_base_qty: max_base_qty,
-                total_quote_qty: max_quote_qty,
-                total_base_qty_posted: base_qty_to_post,
-            });
-        }
-
-        let new_leaf_order_id = event_queue.gen_order_id(limit_price, side);
-        let new_leaf = LeafNode {
-            key: new_leaf_order_id,
-            base_quantity: base_qty_to_post,
-        };
-        let insert_result = self.get_tree(side).insert_leaf(&new_leaf);
-        let k = if let Err(AoError::SlabOutOfSpace) = insert_result {
-            // Boot out the least aggressive orders
-            msg!("Orderbook is full! booting least aggressive orders...");
-            let slab = self.get_tree(side);
-            let boot_candidate = match side {
-                Side::Bid => slab.find_min().unwrap(),
-                Side::Ask => slab.find_max().unwrap(),
-            };
-            let boot_candidate_key = slab.leaf_nodes[boot_candidate as usize].key;
-            let boot_candidate_price = LeafNode::price_from_key(boot_candidate_key);
-            let should_boot = match side {
-                Side::Bid => boot_candidate_price < limit_price,
-                Side::Ask => boot_candidate_price > limit_price,
-            };
-            if should_boot {
-                let (order, callback_info_booted) = slab.remove_by_key(boot_candidate_key).unwrap();
-                let out = OutEvent {
-                    side: side as u8,
-                    order_id: order.order_id(),
-                    base_size: order.base_quantity,
-                    tag: EventTag::Out as u8,
-                    _padding: [0; 14],
-                };
-                event_queue
-                    .push_back(out, Some(callback_info_booted), None)
-                    .map_err(|_| AoError::EventQueueFull)?;
-                slab.insert_leaf(&new_leaf).unwrap().0
-            } else {
-                return Ok(OrderSummary {
-                    posted_order_id: None,
-                    total_base_qty: max_base_qty,
-                    total_quote_qty: max_quote_qty,
-                    total_base_qty_posted: 0,
-                });
-            }
-        } else {
-            insert_result.unwrap().0
-        };
-
-        *self.get_tree(side).get_callback_info_mut(k) = callback_info;
-        Ok(OrderSummary {
-            posted_order_id: Some(new_leaf_order_id),
-            total_base_qty: max_base_qty,
-            total_quote_qty: max_quote_qty,
-            total_base_qty_posted: base_qty_to_post,
-        })
-    }
-
-    /// Attempts to match all spread-crossing orders currently on the book. Limed by `MAX_MATCHES_PER_TRANSACTION`.
-    ///
-    /// Returns the number of successful matches.
-    pub fn match_existing_orders(
-        &mut self,
-        event_queue: &mut EventQueue<'a, C>,
-        min_base_order_size: u64,
-    ) -> Result<bool, AoError> {
-        for _ in 0..MAX_MATCHES_PER_TRANSACTION {
-            let (best_bid, best_ask) = self.get_spread();
-            if let None = best_bid {
-                // no bids to match, orderbook caught up
-                return Ok(true);
-            }
-            if let None = best_ask {
-                // no asks to match, orderbook caught up
-                return Ok(true);
-            }
-
-            let handle = self.asks.find_min().unwrap();
-
-            // pop the order off the tree
-            let (order, callback_info) = self
-                .asks
-                .remove_by_key(self.asks.leaf_nodes[handle as usize].key)
-                .unwrap();
-
-            let limit_price = order.price();
-            let max_quote_qty =
-                fp32_div(limit_price, order.base_quantity).ok_or(AoError::NumericalOverflow)?;
-
-            let order_params = new_order::Params {
-                max_base_qty: order.base_quantity,
-                max_quote_qty,
-                limit_price,
-                side: Side::Ask,
-                match_limit: u64::MAX,
-                callback_info: *callback_info,
-                post_only: false,
-                post_allowed: true,
-                self_trade_behavior: SelfTradeBehavior::CancelProvide,
-            };
-
-            self.new_order(order_params, event_queue, min_base_order_size)?;
-        }
-        Ok(false)
     }
 }
 
@@ -651,35 +537,48 @@ mod tests {
 
         assert_eq!(event_queue.header.count, 2);
         let mut event_queue_iter = event_queue.iter();
-        assert_eq!(
-            event_queue_iter.next().unwrap(),
-            EventRef::Fill(FillEventRef {
-                event: &FillEvent {
-                    tag: EventTag::Fill as u8,
-                    taker_side: Side::Ask as u8,
-                    _padding: [0; 6],
-                    quote_size: 500_000 * 15,
-                    maker_order_id: bob_order_id_0.unwrap(),
-                    base_size: 500_000
-                },
-                maker_callback_info: &bob,
-                taker_callback_info: &alice
-            })
-        );
+        #[allow(clippy::let_and_return)]
+        {
+            assert_eq!(
+                event_queue_iter.next().unwrap(),
+                EventRef::Fill(FillEventRef {
+                    event: &FillEvent {
+                        tag: EventTag::Fill as u8,
+                        taker_side: Side::Ask as u8,
+                        _padding: [0; 6],
+                        quote_size: 500_000 * 15,
+                        maker_order_id: {
+                            let o = bob_order_id_0.unwrap();
+                            #[cfg(target_arch = "aarch64")]
+                            let o = [o as u64, (o >> 64) as u64];
+                            o
+                        },
+                        base_size: 500_000
+                    },
+                    maker_callback_info: &bob,
+                    taker_callback_info: &alice
+                })
+            );
 
-        assert_eq!(
-            event_queue_iter.next().unwrap(),
-            EventRef::Out(OutEventRef {
-                event: &OutEvent {
-                    tag: EventTag::Out as u8,
-                    side: Side::Bid as u8,
-                    _padding: [0; 14],
-                    base_size: 0,
-                    order_id: bob_order_id_0.unwrap()
-                },
-                callback_info: &bob
-            })
-        );
+            assert_eq!(
+                event_queue_iter.next().unwrap(),
+                EventRef::Out(OutEventRef {
+                    event: &OutEvent {
+                        tag: EventTag::Out as u8,
+                        side: Side::Bid as u8,
+                        _padding: [0; 14],
+                        base_size: 0,
+                        order_id: {
+                            let o = bob_order_id_0.unwrap();
+                            #[cfg(target_arch = "aarch64")]
+                            let o = [o as u64, (o >> 64) as u64];
+                            o
+                        }
+                    },
+                    callback_info: &bob
+                })
+            );
+        }
         println!("Event queue head: {}", event_queue.header.head);
         event_queue.pop_n(2);
         println!("Event queue head: {}", event_queue.header.head);
@@ -740,19 +639,27 @@ mod tests {
         assert_eq!(event_queue.header.count, 1);
         println!("Event queue head: {}", event_queue.header.head);
 
-        assert_eq!(
-            event_queue.iter().next().unwrap(),
-            EventRef::Out(OutEventRef {
-                event: &OutEvent {
-                    tag: EventTag::Out as u8,
-                    side: Side::Ask as u8,
-                    _padding: [0; 14],
-                    base_size: 250_000,
-                    order_id: alice_order_id_0.unwrap()
-                },
-                callback_info: &alice
-            })
-        );
+        #[allow(clippy::let_and_return)]
+        {
+            assert_eq!(
+                event_queue.iter().next().unwrap(),
+                EventRef::Out(OutEventRef {
+                    event: &OutEvent {
+                        tag: EventTag::Out as u8,
+                        side: Side::Ask as u8,
+                        _padding: [0; 14],
+                        base_size: 250_000,
+                        order_id: {
+                            let o = alice_order_id_0.unwrap();
+                            #[cfg(target_arch = "aarch64")]
+                            let o = [o as u64, (o >> 64) as u64];
+                            o
+                        }
+                    },
+                    callback_info: &alice
+                })
+            );
+        }
 
         event_queue.pop_n(1);
 
@@ -871,19 +778,27 @@ mod tests {
         assert_eq!(total_base_qty_posted, 1_000_000);
         assert_eq!(event_queue.header.count, 1);
 
-        assert_eq!(
-            event_queue.iter().next().unwrap(),
-            EventRef::Out(OutEventRef {
-                event: &OutEvent {
-                    tag: EventTag::Out as u8,
-                    side: Side::Ask as u8,
-                    _padding: [0; 14],
-                    base_size: 6_000_000,
-                    order_id: order_id_to_be_booted.unwrap()
-                },
-                callback_info: &alice
-            })
-        );
+        #[allow(clippy::let_and_return)]
+        {
+            assert_eq!(
+                event_queue.iter().next().unwrap(),
+                EventRef::Out(OutEventRef {
+                    event: &OutEvent {
+                        tag: EventTag::Out as u8,
+                        side: Side::Ask as u8,
+                        _padding: [0; 14],
+                        base_size: 6_000_000,
+                        order_id: {
+                            let o = order_id_to_be_booted.unwrap();
+                            #[cfg(target_arch = "aarch64")]
+                            let o = [o as u64, (o >> 64) as u64];
+                            o
+                        }
+                    },
+                    callback_info: &alice
+                })
+            );
+        }
 
         event_queue.pop_n(1);
 
@@ -1068,19 +983,27 @@ mod tests {
         assert_eq!(total_base_qty_posted, 1_000_000);
         assert_eq!(event_queue.header.count, 1);
 
-        assert_eq!(
-            event_queue.iter().next().unwrap(),
-            EventRef::Out(OutEventRef {
-                event: &OutEvent {
-                    tag: EventTag::Out as u8,
-                    side: Side::Bid as u8,
-                    _padding: [0; 14],
-                    base_size: 6_000_000,
-                    order_id: order_id_to_be_booted.unwrap()
-                },
-                callback_info: &alice
-            })
-        );
+        #[allow(clippy::let_and_return)]
+        {
+            assert_eq!(
+                event_queue.iter().next().unwrap(),
+                EventRef::Out(OutEventRef {
+                    event: &OutEvent {
+                        tag: EventTag::Out as u8,
+                        side: Side::Bid as u8,
+                        _padding: [0; 14],
+                        base_size: 6_000_000,
+                        order_id: {
+                            let o = order_id_to_be_booted.unwrap();
+                            #[cfg(target_arch = "aarch64")]
+                            let o = [o as u64, (o >> 64) as u64];
+                            o
+                        }
+                    },
+                    callback_info: &alice
+                })
+            );
+        }
 
         event_queue.pop_n(1);
 

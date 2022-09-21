@@ -39,7 +39,10 @@ pub struct Slab<'a, C> {
 #[repr(C)]
 pub struct LeafNode {
     /// The key is the associated order id
+    #[cfg(not(target_arch = "aarch64"))]
     pub key: u128,
+    #[cfg(target_arch = "aarch64")]
+    pub key: [u64; 2],
     /// The quantity of base asset associated with the underlying order
     pub base_quantity: u64,
 }
@@ -49,12 +52,23 @@ impl LeafNode {
 
     /// Parse a leaf node's price
     pub fn price(&self) -> u64 {
-        Self::price_from_key(self.key)
+        #[cfg(not(target_arch = "aarch64"))]
+        let res = Self::price_from_key(self.key);
+        #[cfg(target_arch = "aarch64")]
+        let res = Self::price_from_key(self.order_id());
+        res
     }
 
     /// Get the associated order id
     pub fn order_id(&self) -> u128 {
-        self.key
+        #[cfg(not(target_arch = "aarch64"))]
+        {
+            self.key
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            (self.key[0] as u128) + ((self.key[1] as u128) << 64)
+        }
     }
 
     /// Deduce an associated price from an order_id
@@ -129,25 +143,6 @@ impl<'a, C: Pod> Slab<'a, C> {
         if buf[0] != expected_tag as u8 {
             return Err(ProgramError::InvalidAccountData);
         }
-        let (_, rem) = buf.split_at_mut(8);
-        let (header, rem) = rem.split_at_mut(SlabHeader::LEN);
-        let (leaves, rem) = rem.split_at_mut((capacity + 1) * LeafNode::LEN);
-        let (inner_nodes, callback_infos) = rem.split_at_mut(capacity * InnerNode::LEN);
-        let header = bytemuck::from_bytes_mut::<SlabHeader>(header);
-
-        Ok(Self {
-            header,
-            leaf_nodes: bytemuck::cast_slice_mut::<_, LeafNode>(leaves),
-            inner_nodes: bytemuck::cast_slice_mut::<_, InnerNode>(inner_nodes),
-            callback_infos: bytemuck::cast_slice_mut::<_, C>(callback_infos),
-        })
-    }
-
-    pub fn from_buffer_unchecked(buf: &'a mut [u8]) -> Result<Self, ProgramError> {
-        let callback_info_len = std::mem::size_of::<C>();
-        let leaf_size = LeafNode::LEN + callback_info_len;
-        let capacity = (buf.len() - SlabHeader::LEN - 8 - leaf_size) / (leaf_size + InnerNode::LEN);
-
         let (_, rem) = buf.split_at_mut(8);
         let (header, rem) = rem.split_at_mut(SlabHeader::LEN);
         let (leaves, rem) = rem.split_at_mut((capacity + 1) * LeafNode::LEN);
@@ -249,11 +244,18 @@ impl<'a, C> Slab<'a, C> {
             let shared_prefix_len = match Node::from_handle(root) {
                 Node::Inner => {
                     let root_node = &self.inner_nodes[(!root) as usize];
+                    #[cfg(not(target_arch = "aarch64"))]
                     let shared_prefix_len: u32 = (root_node.key ^ new_leaf.key).leading_zeros();
+                    #[cfg(target_arch = "aarch64")]
+                    let shared_prefix_len: u32 =
+                        (root_node.key ^ new_leaf.order_id()).leading_zeros();
                     let keep_old_root = shared_prefix_len >= root_node.prefix_len as u32;
                     if keep_old_root {
                         parent_node = Some(root);
+                        #[cfg(not(target_arch = "aarch64"))]
                         let r = root_node.walk_down(new_leaf.key);
+                        #[cfg(target_arch = "aarch64")]
+                        let r = root_node.walk_down(new_leaf.order_id());
                         root = r.0;
                         previous_critbit = Some(r.1);
                         continue;
@@ -269,7 +271,11 @@ impl<'a, C> Slab<'a, C> {
                         *root_node = *new_leaf;
                         return Ok((root, Some(leaf_copy)));
                     }
+                    #[cfg(not(target_arch = "aarch64"))]
                     let shared_prefix_len: u32 = (root_node.key ^ new_leaf.key).leading_zeros();
+                    #[cfg(target_arch = "aarch64")]
+                    let shared_prefix_len: u32 =
+                        (root_node.order_id() ^ new_leaf.order_id()).leading_zeros();
 
                     shared_prefix_len
                 }
@@ -277,7 +283,10 @@ impl<'a, C> Slab<'a, C> {
 
             // change the root in place to represent the LCA of [new_leaf] and [root]
             let crit_bit_mask: u128 = (1u128 << 127) >> shared_prefix_len;
+            #[cfg(not(target_arch = "aarch64"))]
             let new_leaf_crit_bit = (crit_bit_mask & new_leaf.key) != 0;
+            #[cfg(target_arch = "aarch64")]
+            let new_leaf_crit_bit = (crit_bit_mask & new_leaf.order_id()) != 0;
             let old_root_crit_bit = !new_leaf_crit_bit;
 
             let new_leaf_handle = self.allocate_leaf().map_err(|_| AoError::SlabOutOfSpace)?;
@@ -286,7 +295,14 @@ impl<'a, C> Slab<'a, C> {
             let new_root_node_handle = self.allocate_inner_node().unwrap();
             let new_root_node = &mut self.inner_nodes[(!new_root_node_handle) as usize];
             new_root_node.prefix_len = shared_prefix_len as u64;
-            new_root_node.key = new_leaf.key;
+            #[cfg(not(target_arch = "aarch64"))]
+            {
+                new_root_node.key = new_leaf.key;
+            }
+            #[cfg(target_arch = "aarch64")]
+            {
+                new_root_node.key = new_leaf.order_id();
+            }
             new_root_node.children[new_leaf_crit_bit as usize] = new_leaf_handle;
             new_root_node.children[old_root_crit_bit as usize] = root;
 
@@ -327,7 +343,12 @@ impl<'a, C> Slab<'a, C> {
             match Node::from_handle(parent_h) {
                 Node::Leaf => {
                     let leaf = &self.leaf_nodes[parent_h as usize];
+                    #[cfg(not(target_arch = "aarch64"))]
                     if leaf.key == search_key {
+                        remove_root = Some(*leaf);
+                    }
+                    #[cfg(target_arch = "aarch64")]
+                    if leaf.order_id() == search_key {
                         remove_root = Some(*leaf);
                     }
                 }
@@ -361,7 +382,12 @@ impl<'a, C> Slab<'a, C> {
                 }
                 Node::Leaf => {
                     let leaf = &self.leaf_nodes[child_h as usize];
+                    #[cfg(not(target_arch = "aarch64"))]
                     if leaf.key != search_key {
+                        return None;
+                    }
+                    #[cfg(target_arch = "aarch64")]
+                    if leaf.order_id() != search_key {
                         return None;
                     }
 
@@ -484,13 +510,24 @@ impl<'a, C> Slab<'a, C> {
                 Node::Leaf => {
                     *leaf_count += 1;
                     let node = &slab.leaf_nodes[h as usize];
-                    assert_eq!(
-                        last_critbit,
-                        (node.key & ((1u128 << 127) >> last_prefix_len)) != 0
-                    );
+                    #[cfg(not(target_arch = "aarch64"))]
+                    {
+                        assert_eq!(
+                            last_critbit,
+                            (node.key & ((1u128 << 127) >> last_prefix_len)) != 0
+                        );
+                    }
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        assert_eq!(
+                            last_critbit,
+                            (node.order_id() & ((1u128 << 127) >> last_prefix_len)) != 0
+                        );
+                    }
                     let prefix_mask =
                         (((((1u128) << 127) as i128) >> last_prefix_len) as u128) << 1;
-                    assert_eq!(last_prefix & prefix_mask, node.key & prefix_mask);
+                    // assert_eq!(last_prefix & prefix_mask, node.key & prefix_mask);
+                    assert_eq!(last_prefix & prefix_mask, node.order_id() & prefix_mask);
                 }
                 Node::Inner => {
                     *inner_node_count += 1;
@@ -572,7 +609,14 @@ impl<'a, C> Slab<'a, C> {
             match Node::from_handle(node_handle) {
                 Node::Leaf => {
                     let n = self.leaf_nodes[node_handle as usize];
+                    #[cfg(not(target_arch = "aarch64"))]
                     if search_key == n.key {
+                        return Some(node_handle);
+                    } else {
+                        return None;
+                    }
+                    #[cfg(target_arch = "aarch64")]
+                    if search_key == n.order_id() {
                         return Some(node_handle);
                     } else {
                         return None;
@@ -716,8 +760,10 @@ mod tests {
                     key,
                     base_quantity: qty,
                 };
-
+                #[cfg(not(target_arch = "aarch64"))]
                 println!("key : {:x}", key);
+                #[cfg(target_arch = "aarch64")]
+                println!("key : {:x}", leaf.order_id());
                 println!("owner : {:?}", &owner.to_bytes());
                 println!("{}", i);
                 let h = slab.insert_leaf(&leaf).unwrap().0;
@@ -725,11 +771,22 @@ mod tests {
                     key: owner.to_bytes(),
                 };
                 *slab.get_callback_info_mut(h) = callback_info;
-                model
-                    .insert(key, (leaf, callback_info))
-                    .ok_or(())
-                    .unwrap_err();
-                all_keys.push(key);
+                #[cfg(not(target_arch = "aarch64"))]
+                {
+                    model
+                        .insert(key, (leaf, callback_info))
+                        .ok_or(())
+                        .unwrap_err();
+                    all_keys.push(key);
+                }
+                #[cfg(target_arch = "aarch64")]
+                {
+                    model
+                        .insert(leaf.order_id(), (leaf, callback_info))
+                        .ok_or(())
+                        .unwrap_err();
+                    all_keys.push(leaf.order_id());
+                }
 
                 // test find_by_key
                 let valid_search_key = *all_keys.choose(&mut rng).unwrap();
@@ -824,16 +881,24 @@ mod tests {
                         let owner = Pubkey::new_unique().to_bytes();
                         let qty = rng.gen();
                         let leaf = LeafNode {
-                            key,
+                            key: {
+                                #[cfg(not(target_arch = "aarch64"))]
+                                let k = key;
+                                #[cfg(target_arch = "aarch64")]
+                                let k = [key as u64, (key >> 64) as u64];
+                                k
+                            },
                             base_quantity: qty,
                         };
                         let (leaf_h, old_leaf) = slab.insert_leaf(&leaf).unwrap();
                         let old_owner = *slab.get_callback_info(leaf_h);
                         *slab.get_callback_info_mut(leaf_h) = owner;
 
-                        println!("Insert {:x}", key);
+                        // println!("Insert {:x}", key);
+                        println!("Insert {:x}", leaf.order_id());
 
-                        all_keys.push(key);
+                        // all_keys.push(key);
+                        all_keys.push(leaf.order_id());
                         let slab_value = old_leaf.map(|l| (l, old_owner));
                         let model_value = model.insert(key, (leaf, owner));
                         if slab_value != model_value {
