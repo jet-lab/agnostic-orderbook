@@ -772,9 +772,9 @@ mod tests {
             assert_eq!(slab.find_max(), None);
 
             for i in 0..100 {
-                let key = rng.gen();
                 let owner = Pubkey::new_unique();
                 let qty = rng.gen();
+                let key: u128 = rng.gen();
                 let leaf = LeafNode {
                     key: {
                         #[cfg(not(target_arch = "aarch64"))]

@@ -821,7 +821,7 @@ mod tests {
                     _padding: [0; 14],
                     base_size: 250_000,
                     order_id: {
-                        let o = order_id_to_be_booted.unwrap();
+                        let o = alice_order_id_0.unwrap();
                         #[cfg(target_arch = "aarch64")]
                         let o = [o as u64, (o >> 64) as u64];
                         o
