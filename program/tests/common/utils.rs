@@ -1,5 +1,7 @@
 use agnostic_orderbook::instruction::create_market;
-use agnostic_orderbook::state::{Event, REGISTER_SIZE, EVENT_QUEUE_HEADER_LEN};
+use agnostic_orderbook::state::critbit::Slab;
+use agnostic_orderbook::state::event_queue::EventQueue;
+use agnostic_orderbook::state::market_state::MarketState;
 use solana_program::instruction::Instruction;
 use solana_program::pubkey::Pubkey;
 use solana_program::system_instruction::create_account;
@@ -11,8 +13,8 @@ use solana_sdk::{signature::Keypair, transaction::Transaction};
 /// address of the market.
 pub async fn create_market_and_accounts(
     prg_test_ctx: &mut ProgramTestContext,
+    register_account: Pubkey,
     agnostic_orderbook_program_id: Pubkey,
-    caller_authority: &Keypair,
 ) -> Pubkey {
     let rent = prg_test_ctx.banks_client.get_rent().await.unwrap();
 
@@ -21,8 +23,8 @@ pub async fn create_market_and_accounts(
     let create_market_account_instruction = create_account(
         &prg_test_ctx.payer.pubkey(),
         &market_account.pubkey(),
-        rent.minimum_balance(1_000_000),
-        1_000_000,
+        rent.minimum_balance(MarketState::LEN + 8),
+        MarketState::LEN as u64 + 8,
         &agnostic_orderbook_program_id,
     );
     sign_send_instructions(
@@ -35,7 +37,7 @@ pub async fn create_market_and_accounts(
 
     // Create event queue account
     let event_queue_account = Keypair::new();
-    let space = EVENT_QUEUE_HEADER_LEN + REGISTER_SIZE + (Event::compute_slot_size(32) * 10000);
+    let space = EventQueue::<[u8; 32]>::compute_allocation_size(1000);
     let create_event_queue_account_instruction = create_account(
         &prg_test_ctx.payer.pubkey(),
         &event_queue_account.pubkey(),
@@ -53,11 +55,12 @@ pub async fn create_market_and_accounts(
 
     // Create bids account
     let bids_account = Keypair::new();
+    let slab_space = Slab::<[u8; 32]>::compute_allocation_size(1000);
     let create_bids_account_instruction = create_account(
         &prg_test_ctx.payer.pubkey(),
         &bids_account.pubkey(),
-        rent.minimum_balance(1_000_000),
-        1_000_000,
+        rent.minimum_balance(slab_space),
+        slab_space as u64,
         &agnostic_orderbook_program_id,
     );
     sign_send_instructions(
@@ -73,8 +76,8 @@ pub async fn create_market_and_accounts(
     let create_asks_account_instruction = create_account(
         &prg_test_ctx.payer.pubkey(),
         &asks_account.pubkey(),
-        rent.minimum_balance(1_000_000),
-        1_000_000,
+        rent.minimum_balance(slab_space),
+        slab_space as u64,
         &agnostic_orderbook_program_id,
     );
     sign_send_instructions(
@@ -93,13 +96,10 @@ pub async fn create_market_and_accounts(
             bids: &bids_account.pubkey(),
             asks: &asks_account.pubkey(),
         },
+        register_account,
         create_market::Params {
-            caller_authority: caller_authority.pubkey().to_bytes(),
-            callback_info_len: 32,
-            callback_id_len: 32,
             min_base_order_size: 10,
             tick_size: 1,
-            cranker_reward: 0,
         },
     );
     sign_send_instructions(prg_test_ctx, vec![create_market_instruction], vec![])

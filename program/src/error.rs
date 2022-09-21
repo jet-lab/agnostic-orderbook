@@ -52,6 +52,10 @@ pub enum AoError {
     IllegalMsrmOwner,
     #[error("Limit price must be a tick size multiple")]
     InvalidLimitPrice,
+    #[error("Numerical overlflow")]
+    NumericalOverflow,
+    #[error("Invalid callback info")]
+    InvalidCallbackInfo,
 }
 
 impl From<AoError> for ProgramError {

@@ -1,20 +1,23 @@
-//! Cancel an existing order in the orderbook.
+//! Cancel a series of existing orders in the orderbook.
 
-use bonfida_utils::fp_math::fp32_mul_floor;
-use bonfida_utils::{BorshSize, InstructionsAccount};
+use bonfida_utils::{fp_math::fp32_mul_floor, BorshSize, InstructionsAccount};
 use borsh::{BorshDeserialize, BorshSerialize};
 use bytemuck::Pod;
-use solana_program::account_info::next_account_info;
 use solana_program::{
-    account_info::AccountInfo, entrypoint::ProgramResult, program_error::ProgramError,
+    account_info::{next_account_info, AccountInfo},
+    entrypoint::ProgramResult,
+    program_error::ProgramError,
     pubkey::Pubkey,
 };
 
-use crate::state::orderbook::{CallbackInfo, OrderBookState, OrderSummary};
-use crate::state::AccountTag;
 use crate::{
     error::AoError,
-    state::{get_side_from_order_id, market_state::MarketState},
+    state::{
+        get_side_from_order_id,
+        market_state::MarketState,
+        orderbook::{CallbackInfo, OrderBookState, OrderSummary},
+        AccountTag,
+    },
     utils::{check_account_key, check_account_owner},
 };
 #[derive(BorshDeserialize, BorshSerialize, Clone, BorshSize)]
@@ -23,7 +26,7 @@ The required arguments for a cancel_order instruction.
 */
 pub struct Params {
     /// The order id is a unique identifier for a particular order
-    pub order_id: u128,
+    pub order_ids: Vec<u128>,
 }
 
 /// The required accounts for a cancel_order instruction.
@@ -54,7 +57,6 @@ impl<'a, 'b: 'a> Accounts<'a, AccountInfo<'b>> {
         };
         Ok(a)
     }
-
     /// Perform basic security checks on the accounts
     pub(crate) fn perform_checks(&self, program_id: &Pubkey) -> Result<(), ProgramError> {
         check_account_owner(
@@ -82,8 +84,8 @@ where
     <C as CallbackInfo>::CallbackId: PartialEq,
 {
     accounts.perform_checks(program_id)?;
-    let mut market_state_data = accounts.market.data.borrow_mut();
-    let market_state = MarketState::from_buffer(&mut market_state_data, AccountTag::Market)?;
+    let mut market_data = accounts.market.data.borrow_mut();
+    let market_state = MarketState::from_buffer(&mut market_data, AccountTag::Market)?;
 
     check_accounts(&accounts, market_state)?;
 
@@ -92,13 +94,17 @@ where
 
     let mut order_book = OrderBookState::<C>::new_safe(&mut bids_guard, &mut asks_guard)?;
 
-    let slab = order_book.get_tree(get_side_from_order_id(params.order_id));
-    let (leaf_node, _) = slab
-        .remove_by_key(params.order_id)
-        .ok_or(AoError::OrderNotFound)?;
-    let total_base_qty = leaf_node.base_quantity;
-    let total_quote_qty = fp32_mul_floor(leaf_node.base_quantity, leaf_node.price())
-        .ok_or(AoError::NumericalOverflow)?;
+    let mut total_base_qty = 0u64;
+    let mut total_quote_qty = 0u64;
+
+    for order_id in params.order_ids {
+        let slab = order_book.get_tree(get_side_from_order_id(order_id));
+        let (leaf_node, _) = slab.remove_by_key(order_id).ok_or(AoError::OrderNotFound)?;
+        total_base_qty = total_base_qty.checked_add(leaf_node.base_quantity).unwrap();
+        total_quote_qty = fp32_mul_floor(leaf_node.base_quantity, leaf_node.price())
+            .and_then(|n| n.checked_add(total_quote_qty))
+            .unwrap();
+    }
 
     let order_summary = OrderSummary {
         posted_order_id: None,

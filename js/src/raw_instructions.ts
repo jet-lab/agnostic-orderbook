@@ -8,6 +8,71 @@ export interface AccountKey {
   isSigner: boolean;
   isWritable: boolean;
 }
+export class closeMarketInstruction {
+  tag: number;
+  static schema: Schema = new Map([
+    [
+      closeMarketInstruction,
+      {
+        kind: "struct",
+        fields: [["tag", "u8"]],
+      },
+    ],
+  ]);
+  constructor() {
+    this.tag = 4;
+  }
+  serialize(): Uint8Array {
+    return serialize(closeMarketInstruction.schema, this);
+  }
+  getInstruction(
+    programId: PublicKey,
+    market: PublicKey,
+    eventQueue: PublicKey,
+    bids: PublicKey,
+    asks: PublicKey,
+    authority: PublicKey,
+    lamportsTargetAccount: PublicKey
+  ): TransactionInstruction {
+    const data = Buffer.from(this.serialize());
+    let keys: AccountKey[] = [];
+    keys.push({
+      pubkey: market,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: eventQueue,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: bids,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: asks,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: authority,
+      isSigner: true,
+      isWritable: false,
+    });
+    keys.push({
+      pubkey: lamportsTargetAccount,
+      isSigner: false,
+      isWritable: true,
+    });
+    return new TransactionInstruction({
+      keys,
+      programId,
+      data,
+    });
+  }
+}
 export class consumeEventsInstruction {
   tag: number;
   numberOfEntriesToConsume: BN;
@@ -56,6 +121,150 @@ export class consumeEventsInstruction {
     });
     keys.push({
       pubkey: rewardTarget,
+      isSigner: false,
+      isWritable: true,
+    });
+    return new TransactionInstruction({
+      keys,
+      programId,
+      data,
+    });
+  }
+}
+export class cancelOrderInstruction {
+  tag: number;
+  orderId: BN;
+  static schema: Schema = new Map([
+    [
+      cancelOrderInstruction,
+      {
+        kind: "struct",
+        fields: [
+          ["tag", "u8"],
+          ["orderId", "u128"],
+        ],
+      },
+    ],
+  ]);
+  constructor(obj: { orderId: BN }) {
+    this.tag = 3;
+    this.orderId = obj.orderId;
+  }
+  serialize(): Uint8Array {
+    return serialize(cancelOrderInstruction.schema, this);
+  }
+  getInstruction(
+    programId: PublicKey,
+    market: PublicKey,
+    eventQueue: PublicKey,
+    bids: PublicKey,
+    asks: PublicKey,
+    authority: PublicKey
+  ): TransactionInstruction {
+    const data = Buffer.from(this.serialize());
+    let keys: AccountKey[] = [];
+    keys.push({
+      pubkey: market,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: eventQueue,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: bids,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: asks,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: authority,
+      isSigner: true,
+      isWritable: false,
+    });
+    return new TransactionInstruction({
+      keys,
+      programId,
+      data,
+    });
+  }
+}
+export class createMarketInstruction {
+  tag: number;
+  callerAuthority: Uint8Array;
+  callbackInfoLen: BN;
+  callbackIdLen: BN;
+  minBaseOrderSize: BN;
+  tickSize: BN;
+  crankerReward: BN;
+  static schema: Schema = new Map([
+    [
+      createMarketInstruction,
+      {
+        kind: "struct",
+        fields: [
+          ["tag", "u8"],
+          ["callerAuthority", [32]],
+          ["callbackInfoLen", "u64"],
+          ["callbackIdLen", "u64"],
+          ["minBaseOrderSize", "u64"],
+          ["tickSize", "u64"],
+          ["crankerReward", "u64"],
+        ],
+      },
+    ],
+  ]);
+  constructor(obj: {
+    callerAuthority: Uint8Array;
+    callbackInfoLen: BN;
+    callbackIdLen: BN;
+    minBaseOrderSize: BN;
+    tickSize: BN;
+    crankerReward: BN;
+  }) {
+    this.tag = 0;
+    this.callerAuthority = obj.callerAuthority;
+    this.callbackInfoLen = obj.callbackInfoLen;
+    this.callbackIdLen = obj.callbackIdLen;
+    this.minBaseOrderSize = obj.minBaseOrderSize;
+    this.tickSize = obj.tickSize;
+    this.crankerReward = obj.crankerReward;
+  }
+  serialize(): Uint8Array {
+    return serialize(createMarketInstruction.schema, this);
+  }
+  getInstruction(
+    programId: PublicKey,
+    market: PublicKey,
+    eventQueue: PublicKey,
+    bids: PublicKey,
+    asks: PublicKey
+  ): TransactionInstruction {
+    const data = Buffer.from(this.serialize());
+    let keys: AccountKey[] = [];
+    keys.push({
+      pubkey: market,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: eventQueue,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: bids,
+      isSigner: false,
+      isWritable: true,
+    });
+    keys.push({
+      pubkey: asks,
       isSigner: false,
       isWritable: true,
     });
@@ -164,27 +373,27 @@ export class newOrderInstruction {
     });
   }
 }
-export class cancelOrderInstruction {
+export class massCancelOrderInstruction {
   tag: number;
-  orderId: BN;
+  orderIds: BN[];
   static schema: Schema = new Map([
     [
-      cancelOrderInstruction,
+      massCancelOrderInstruction,
       {
         kind: "struct",
         fields: [
           ["tag", "u8"],
-          ["orderId", "u128"],
+          ["orderIds", ["u128"]],
         ],
       },
     ],
   ]);
-  constructor(obj: { orderId: BN }) {
-    this.tag = 3;
-    this.orderId = obj.orderId;
+  constructor(obj: { orderIds: BN[] }) {
+    this.tag = 5;
+    this.orderIds = obj.orderIds;
   }
   serialize(): Uint8Array {
-    return serialize(cancelOrderInstruction.schema, this);
+    return serialize(massCancelOrderInstruction.schema, this);
   }
   getInstruction(
     programId: PublicKey,
@@ -220,151 +429,6 @@ export class cancelOrderInstruction {
       pubkey: authority,
       isSigner: true,
       isWritable: false,
-    });
-    return new TransactionInstruction({
-      keys,
-      programId,
-      data,
-    });
-  }
-}
-export class closeMarketInstruction {
-  tag: number;
-  static schema: Schema = new Map([
-    [
-      closeMarketInstruction,
-      {
-        kind: "struct",
-        fields: [["tag", "u8"]],
-      },
-    ],
-  ]);
-  constructor() {
-    this.tag = 4;
-  }
-  serialize(): Uint8Array {
-    return serialize(closeMarketInstruction.schema, this);
-  }
-  getInstruction(
-    programId: PublicKey,
-    market: PublicKey,
-    eventQueue: PublicKey,
-    bids: PublicKey,
-    asks: PublicKey,
-    authority: PublicKey,
-    lamportsTargetAccount: PublicKey
-  ): TransactionInstruction {
-    const data = Buffer.from(this.serialize());
-    let keys: AccountKey[] = [];
-    keys.push({
-      pubkey: market,
-      isSigner: false,
-      isWritable: true,
-    });
-    keys.push({
-      pubkey: eventQueue,
-      isSigner: false,
-      isWritable: true,
-    });
-    keys.push({
-      pubkey: bids,
-      isSigner: false,
-      isWritable: true,
-    });
-    keys.push({
-      pubkey: asks,
-      isSigner: false,
-      isWritable: true,
-    });
-    keys.push({
-      pubkey: authority,
-      isSigner: true,
-      isWritable: false,
-    });
-    keys.push({
-      pubkey: lamportsTargetAccount,
-      isSigner: false,
-      isWritable: true,
-    });
-    return new TransactionInstruction({
-      keys,
-      programId,
-      data,
-    });
-  }
-}
-export class createMarketInstruction {
-  tag: number;
-  callerAuthority: Uint8Array;
-  callbackInfoLen: BN;
-  callbackIdLen: BN;
-  minBaseOrderSize: BN;
-  tickSize: BN;
-  crankerReward: BN;
-  static schema: Schema = new Map([
-    [
-      createMarketInstruction,
-      {
-        kind: "struct",
-        fields: [
-          ["tag", "u8"],
-          ["callerAuthority", [32]],
-          ["callbackInfoLen", "u64"],
-          ["callbackIdLen", "u64"],
-          ["minBaseOrderSize", "u64"],
-          ["tickSize", "u64"],
-          ["crankerReward", "u64"],
-        ],
-      },
-    ],
-  ]);
-  constructor(obj: {
-    callerAuthority: Uint8Array;
-    callbackInfoLen: BN;
-    callbackIdLen: BN;
-    minBaseOrderSize: BN;
-    tickSize: BN;
-    crankerReward: BN;
-  }) {
-    this.tag = 0;
-    this.callerAuthority = obj.callerAuthority;
-    this.callbackInfoLen = obj.callbackInfoLen;
-    this.callbackIdLen = obj.callbackIdLen;
-    this.minBaseOrderSize = obj.minBaseOrderSize;
-    this.tickSize = obj.tickSize;
-    this.crankerReward = obj.crankerReward;
-  }
-  serialize(): Uint8Array {
-    return serialize(createMarketInstruction.schema, this);
-  }
-  getInstruction(
-    programId: PublicKey,
-    market: PublicKey,
-    eventQueue: PublicKey,
-    bids: PublicKey,
-    asks: PublicKey
-  ): TransactionInstruction {
-    const data = Buffer.from(this.serialize());
-    let keys: AccountKey[] = [];
-    keys.push({
-      pubkey: market,
-      isSigner: false,
-      isWritable: true,
-    });
-    keys.push({
-      pubkey: eventQueue,
-      isSigner: false,
-      isWritable: true,
-    });
-    keys.push({
-      pubkey: bids,
-      isSigner: false,
-      isWritable: true,
-    });
-    keys.push({
-      pubkey: asks,
-      isSigner: false,
-      isWritable: true,
     });
     return new TransactionInstruction({
       keys,

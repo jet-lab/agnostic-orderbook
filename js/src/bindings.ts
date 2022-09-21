@@ -6,9 +6,9 @@ import {
   TransactionInstruction,
 } from "@solana/web3.js";
 import BN from "bn.js";
-import { EventQueueHeader } from "./event_queue";
+import { EventQueue } from "./event_queue";
 import { MarketState } from "./market_state";
-import { Slab, SlabHeader } from "./slab";
+import { Slab } from "./slab";
 import { createMarketInstruction } from "./raw_instructions";
 import { PrimedTransaction } from "./types";
 
@@ -26,7 +26,7 @@ export const AAOB_ID = new PublicKey(
  * @param callbackInfoLen An example of this would be to store a public key to uniquely identify the owner of a particular order. This example would require a value of 32
  * @param callbackIdLen The prefix length of callback information which is used to identify self-trading in this example
  * @param eventCapacity The capacity of an event
- * @param nodesCapacity The capacity of a node
+ * @param orderCapacity The capacity of a node
  * @param feePayer The fee payer of the transaction
  * @param programId The agnostic orderbook program ID, or null to use the deployed program ID
  * @returns
@@ -34,14 +34,13 @@ export const AAOB_ID = new PublicKey(
 export const createMarket = async (
   connection: Connection,
   callerAuthority: PublicKey,
-  callbackInfoLen: BN,
+  callbackInfoLen: number,
   callbackIdLen: BN,
   eventCapacity: number,
-  nodesCapacity: number,
+  orderCapacity: number,
   minBaseOrderSize: BN,
   feePayer: PublicKey,
   tickSize: BN,
-  crankerReward: BN,
   programId?: PublicKey
 ): Promise<PrimedTransaction> => {
   if (programId === undefined) {
@@ -52,12 +51,10 @@ export const createMarket = async (
 
   // Event queue account
   const eventQueue = new Keypair();
-  const eventQueueSize =
-    EventQueueHeader.LEN +
-    EventQueueHeader.REGISTER_SIZE +
-    EventQueueHeader.computeSlotSize(callbackInfoLen)
-      .muln(eventCapacity)
-      .toNumber();
+  const eventQueueSize = EventQueue.computeAllocationSize(
+    eventCapacity,
+    callbackInfoLen
+  );
   const createEventQueueAccount = SystemProgram.createAccount({
     fromPubkey: feePayer,
     lamports: await connection.getMinimumBalanceForRentExemption(
@@ -72,7 +69,7 @@ export const createMarket = async (
 
   // Bids account
   const bids = new Keypair();
-  const slabSize = SlabHeader.PADDED_LEN + Slab.SLOT_SIZE * nodesCapacity;
+  const slabSize = Slab.computeAllocationSize(orderCapacity, callbackInfoLen);
   const createBidsAccount = SystemProgram.createAccount({
     fromPubkey: feePayer,
     lamports: await connection.getMinimumBalanceForRentExemption(slabSize),
@@ -112,11 +109,11 @@ export const createMarket = async (
   // Create market
   const createMarket = new createMarketInstruction({
     callerAuthority: callerAuthority.toBuffer(),
-    callbackInfoLen,
+    callbackInfoLen: new BN(callbackInfoLen),
     callbackIdLen,
     minBaseOrderSize,
     tickSize,
-    crankerReward,
+    crankerReward: new BN(0),
   }).getInstruction(
     programId,
     market.publicKey,
