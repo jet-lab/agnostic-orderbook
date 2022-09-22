@@ -731,27 +731,6 @@ mod tests {
             );
         }
 
-        #[allow(clippy::let_and_return)]
-        {
-            assert_eq!(
-                event_queue.iter().next().unwrap(),
-                EventRef::Out(OutEventRef {
-                    event: &OutEvent {
-                        tag: EventTag::Out as u8,
-                        side: Side::Ask as u8,
-                        _padding: [0; 14],
-                        base_size: 250_000,
-                        order_id: {
-                            let o = alice_order_id_0.unwrap();
-                            #[cfg(target_arch = "aarch64")]
-                            let o = [o as u64, (o >> 64) as u64];
-                            o
-                        }
-                    },
-                    callback_info: &alice
-                })
-            );
-        }
         println!("Event queue head: {}", event_queue.header.head);
         event_queue.pop_n(2);
         println!("Event queue head: {}", event_queue.header.head);
