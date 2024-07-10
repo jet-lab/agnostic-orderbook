@@ -15,7 +15,7 @@ use crate::{
 use bonfida_utils::fp_math::{fp32_div, fp32_mul_ceil, fp32_mul_floor};
 use bytemuck::Pod;
 use solana_program::{msg, program_error::ProgramError};
-use anchor_lang::{AnchorSerialize, AnchorDeserialize};
+use borsh::{BorshDeserialize, BorshSerialize};
 
 /// This struct is written back into the event queue's register after new_order or cancel_order.
 ///
@@ -23,7 +23,7 @@ use anchor_lang::{AnchorSerialize, AnchorDeserialize};
 /// were either matched against other orders or written into the orderbook.
 ///
 /// In the case of an order cancellation, the quantities describe what was left of the order in the orderbook.
-#[derive(Debug, AnchorSerialize, AnchorDeserialize)]
+#[derive(Debug, BorshSerialize, BorshDeserialize, Clone, Default)]
 pub struct OrderSummary {
     /// When applicable, the order id of the newly created order.
     pub posted_order_id: Option<u128>,

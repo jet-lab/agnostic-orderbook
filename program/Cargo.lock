@@ -70,7 +70,7 @@ dependencies = [
  "anchor-lang",
  "arrayref",
  "bonfida-utils",
- "borsh 0.9.3",
+ "borsh 1.5.1",
  "bytemuck",
  "enumflags2",
  "gnuplot",

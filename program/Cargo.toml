@@ -19,9 +19,9 @@ benchmarking = ["bonfida-utils/benchmarking"]
 
 [dependencies]
 solana-program = ">=1.17, <1.18"
-bytemuck = {version = "1.7.2", features= ["derive"]}
+bytemuck = { version = "1.16.1", features = ["derive", "min_const_generics"]}
 num_enum = "0.5.4"
-borsh = "0.9.1"
+borsh = "1.5.1"
 thiserror = "1.0.24"
 num-traits = "0.2"
 num-derive = "0.3"
