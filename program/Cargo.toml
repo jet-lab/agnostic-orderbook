@@ -21,7 +21,7 @@ benchmarking = ["bonfida-utils/benchmarking"]
 solana-program = ">=1.17, <1.18"
 bytemuck = { version = "1.16.1", features = ["derive", "min_const_generics"]}
 num_enum = "0.5.4"
-borsh = "0.9.0"
+borsh = ">=0.9, <0.11"
 thiserror = "1.0.24"
 num-traits = "0.2"
 num-derive = "0.3"
