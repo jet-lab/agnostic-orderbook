@@ -70,7 +70,7 @@ dependencies = [
  "anchor-lang",
  "arrayref",
  "bonfida-utils",
- "borsh 0.9.3",
+ "borsh 0.10.3",
  "bytemuck",
  "enumflags2",
  "gnuplot",
@@ -690,9 +690,9 @@ checksum = "8d696c370c750c948ada61c69a0ee2cbbb9c50b1019ddb86d9317157a99c2cae"
 
 [[package]]
 name = "bonfida-macros"
-version = "0.2.8"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd5e1068f5ce49b37565552ad659c96599601bb81e320491eef6545d5e7e1286"
+checksum = "ea557c4f8b6b16a9f4dc63b46a473923dc244c3a621b85b499a7492e1c731046"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -703,12 +703,12 @@ dependencies = [
 
 [[package]]
 name = "bonfida-utils"
-version = "0.3.3"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aede865c16b88d0c8beec8ad32fe92b057e0a7e8bbe97d4b96ea3361bb2778be"
+checksum = "9f0941d788517875cce129abd5198b0dcc049091cb6e2125f468074efaf19196"
 dependencies = [
  "bonfida-macros",
- "borsh 0.9.3",
+ "borsh 0.10.3",
  "bytemuck",
  "lazy_static",
  "pyth-sdk-solana",
@@ -716,7 +716,7 @@ dependencies = [
  "serde",
  "serde_json",
  "solana-program 1.17.14",
- "spl-token 3.5.0",
+ "spl-token 4.0.0",
 ]
 
 [[package]]
@@ -4971,12 +4971,12 @@ dependencies = [
 
 [[package]]
 name = "spl-name-service"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4c2920a0762e3fdbd02a24469787d9217f658776502265a9b99903557be28adf"
+checksum = "cd86d88036c8aab3f30127be627d1d34ddcaeefd5ea7d585a066693974a0bfca"
 dependencies = [
- "borsh 0.9.3",
- "num-derive 0.3.3",
+ "borsh 0.10.3",
+ "num-derive 0.4.2",
  "num-traits",
  "solana-program 1.17.14",
  "thiserror",
